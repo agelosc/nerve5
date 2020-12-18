@@ -6,7 +6,7 @@ import maya.utils as mu
 import maya.OpenMaya as OpenMaya
 import maya.OpenMayaUI as OpenMayaUI
 
-# Nerve#
+# Nerve
 import nerve
 
 # Other
