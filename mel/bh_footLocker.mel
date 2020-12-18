@@ -1,0 +1,142 @@
+// bh_footLocker - helper tool to use with bh_pathAnim V1.01 141217 
+
+
+
+global proc bh_footLocker()
+    {
+    if (`window -exists bh_footLockerUI`)
+        deleteUI bh_footLockerUI;
+        
+        window -toolbox 1 -width 180 -t "bh_footLocker" -mxb 0 -mnb 0 bh_footLockerUI;
+        columnLayout -adj 1 -rowSpacing 1 -columnWidth 180 mainCol;
+		
+        rowColumnLayout -numberOfColumns 2;
+
+      
+	   button -label "Contact Start Frame" -command bh_getConFrame key1; 	
+	   intField  -minValue 0 -maxValue 9999 -value 0 conStartField; // numerical entry field for start frame  value
+	   button -label "Contact End Frame" -command bh_getConEndFrame key2; 	
+	   intField  -minValue 0 -maxValue 9999 -value 0 conEndField; // numerical entry field for start frame  value
+	   button -label "Reset Frame " -command bh_getResetFrame key3; 	
+		intField  -minValue 0 -maxValue 9999 -value 0 resetField; // numerical entry field for start frame  value
+		button -label "Next Contact Frame" -command bh_getNewConFrame key4; 
+		intField  -minValue 0 -maxValue 9999 -value 0 newConField; // numerical entry field for start frame  value
+		
+	setParent..;   	
+	button -label " Lock it Down! " -command bh_footLockerProc key5; 	
+    showWindow bh_footLockerUI;
+    
+    }
+    bh_footLocker;
+	
+	// UI procs//
+	global proc bh_getConFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame conStartField;
+	}
+	global proc bh_getConEndFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame conEndField;
+	}
+	global proc bh_getResetFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame resetField;
+	}    
+	global proc bh_getNewConFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame newConField;
+	}
+    
+    //////////////////////////
+    
+    global proc bh_footLockerProc ()
+    {
+	string $origSel[]=`ls -sl`;
+
+    int $startFrame = `intField -query -value conStartField`;
+
+	int $stopFrame= `intField -query -value conEndField`;	
+	int $resetFrame= `intField -query -value resetField`;
+	int $newContactFrame = `intField -query -value newConField`;
+	
+	// some error checking!
+	
+	if ($stopFrame<$startFrame)
+	{error "Contact End Frame is less than Contact Start Frame!";
+	}
+	
+	if ($resetFrame<$stopFrame)
+	{error "Reset Frame is less than Contact End Frame!";
+	}
+	if ($newContactFrame<$resetFrame)
+	{error "Next Contact Frame is less than Reset Frame!";
+	}
+	
+	if ($stopFrame==$startFrame)
+	{error "Contact End Frame is the same as Contact Start Frame!";
+	}
+	
+	if ($resetFrame==$stopFrame)
+	{error "Reset Frame is the same as Contact End Frame!";
+	}
+	if ($newContactFrame==$resetFrame)
+	{error "Next Contact Frame is the same as Reset Frame!";
+	}
+	
+	currentTime $startFrame;
+	
+	for ($each in $origSel)
+	{
+	// store the current world space coords .. 
+	float $CurWSRotation[] = `xform -q -ws -ro $each `;
+	float $CurWSPosition[] = `xform -q -ws -t $each `;
+	
+
+	//// key the locked section.. 
+	  for($f=$startFrame;$f<($stopFrame);$f++)
+	{
+	currentTime $f;
+	xform -ws -ro $CurWSRotation[0] $CurWSRotation[1] $CurWSRotation[2] $each ;
+	xform -ws -t $CurWSPosition[0] $CurWSPosition[1] $CurWSPosition[2] $each ;
+	setKeyframe;
+	  }
+	  
+	  // do the reset here
+	  currentTime $resetFrame;
+	  bh_zeroPosRot;
+	  setKeyframe;
+	  
+	  // move on to the new contact frame here
+	  currentTime $newContactFrame;
+	  //reset and key again here in case there are other keyframes further down the timeline
+	  bh_zeroPosRot;
+	  setKeyframe; // also makes it clear which is the new contact frame.. 
+	  
+	  }
+
+	  // update the fields here .. .
+	  int $addFramesVal=$newContactFrame-$startFrame;
+	  intField -e -value ($startFrame+$addFramesVal) conStartField;
+	  intField -e -value ($stopFrame+$addFramesVal) conEndField;
+	  intField -e -value ($resetFrame+$addFramesVal) resetField;
+	  intField -e -value ($newContactFrame+$addFramesVal) newConField;
+	  
+	  select -r $origSel;
+    }
+   
+   global proc bh_zeroPosRot()
+   {
+   string $sel[]=`ls -sl`;
+   for ($each in $sel)
+	   {
+	   setAttr ($each+".translateX") 0;
+	   setAttr ($each+".translateY") 0;
+	   setAttr ($each+".translateZ") 0;
+	   setAttr ($each+".rotateX") 0;
+	   setAttr ($each+".rotateY") 0;
+	   setAttr ($each+".rotateZ") 0;
+	   setKeyframe;
+	   
+	   }
+	  
+   }

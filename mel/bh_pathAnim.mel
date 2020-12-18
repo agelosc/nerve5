@@ -1,0 +1,1933 @@
+// bh_pathAnim 1.042 - 27 July 2018
+/*
+
+// adding 'autoRebuild' function to load path positions.. 
+// added check for existing path system before saving/loading
+// added Locator size option..
+// added Save/Load path position commands to GUI 
+// the scale value in the GUI now gets set to the correct value if a path system already exists in the scene when opened
+// changed 'project curves to mesh' proc so that it doesn't offset curves if the path curves group has been moved..
+//tweaked gui/procs for Reduce Stretch tool
+// adding Reverse Curves Command
+// adjusted Reset Selected CVs command to work with rebuilt curves
+// added project to selected mesh command 
+// added rebuild curves command
+// Added Z-Up Support- uses negative Y as forward axis for now.. adjusted reset path CVS proc to work with this
+//calculateHooksOffsets proc has been updated.. same thing with path curve drawing and motion path up vector settings..
+string $worldUpOption=`upAxis -q -axis` - this will return Y usually or possibly Z.. which means changing all coords to suit
+
+// added bh_footLocker and bh_keyFor to menu
+// removed unused procs/buttons
+// added 'fix rig stretch' proc in options menu - Now has a GUI for faster adjustment.. 
+// hiding UI during attach to hooks
+// hiding UI during bake to rig..
+// added restore View button in case of errors during baking
+// added check to bake to rig proc - will error and not bake if no rig ctrls are attached to the hooks 
+// added About menu
+// adding display locator options..
+// locking things down.. 
+// working on create hooks proc to fix undo issues and general tidy up.. 
+// added automatic set up hooks offset procs! 
+// now automatically mutes the path travel attribute while Attaching rig to hooks to prevent offsets
+ // Added reset selected path curves proc to Options Menu.. 
+ // made default path longer, added more control points to it
+//  Added scale path system ctrl
+// added curve length feature to store default and current lenght of ground curve to help calculate keyframes more easily
+// Added an alternative version of Bake Path Anim To Rig command that doesn't rely on bakeSimulation - currently this is the one being used
+// it works better with the progress meter and -may- be more robust - test it with auto key on/off different rigs etc..
+// added first version of Bake Path Anim To Rig command
+// attach rig to hooks now ignores controls that are already attached and only processes controls that aren't. 
+     useful if you test an animation moving along the path and realise you forgot to attach some controls.
+// adding additional locators at the origin of each control for use with bhLockToWorld etc.
+// added delete path anim system button with confirm dialog.
+// added dialog to confirm deleting existing path anim curves and create new ones if they already exist.
+// added multiply nodes to change travel range from 0-1 to 0-100 -(percentage of path, easier to adjust in channel box.. 
+// switching from parent constraints to point and/or orient to suit rigs with locked channels - 
+ this means pole vector and FK controls can still use and align to path even with locked translates or rotates
+// added groups for hooks to keep scene tidy.
+/ added checks for Path Curves and won't run `attach hooks` or `add hooks` if they have not been created yet.
+/ added 'anim offset' locators to make it easy to fix penetrations etc. before baking back to rig.
+
+//================================================================================================	
+//================================================================================================
+*/
+    // Create UI section
+	global proc bh_pathAnim(){
+	////////////////////////////////////////////////////
+	string $version="1.042 - 27 July 2018";
+	////////////////////////////////////////////////////
+	
+	
+    if (`window -exists bh_pathAnimUI`)
+        deleteUI bh_pathAnimUI;
+        
+            window -menuBar 1 bh_pathAnimUI;
+			columnLayout;
+			
+		menu -l "Options                             " -to 1 SNUIoptionsMenu;
+		menuItem -dl "Rig Tools" -divider 1;
+
+		menuItem -l "Fix Rig Stretch GUI"   -c "bh_stretchFixGUI()";
+		menuItem -l "Foot Locker GUI" -c bh_footLockerPA;
+		//menuItem -l "Key For GUI" -c bh_keyForPA;
+		menuItem -dl "Path Tools" -divider 1;
+		menuItem -l " Rebuild/Project Path Curves" -c bh_rebuildProjectCurvesUI;
+		menuItem -l " Reset Selected Path CVs" -c bh_resetCurvePoints;
+		menuItem -l " Save Out Path Positions" -c bh_savePathPointPositions;
+		menuItem -l " Load In Path Positions" -c bh_loadPathPointPositions;
+		menuItem -dl "Locator Display" -divider 1;
+		
+		menuItem -l "Hide Anim Offset (Red) Locators " -c bh_hideAnimOffsetLocators -cb 0  hao;
+		menuItem -l "Hide Ctrl Pivot (Yellow) Locators " -c bh_hideCtrlPivotLocators -cb 0  cpl;
+		menuItem -dl "Performance Optimization" -divider 1;
+		menuItem -l "Disable View while Baking (FASTER!) " -cb 1  disableViewCBox;
+		menuItem -l " <<Restore the View>> " -c bh_restoreTheView ;
+		//menuItem -dl "More Tools" -divider 1;
+		
+		
+		menu -l "  About" -to 1 aboutMenu5;
+	    menuItem -l "bh_pathAnim by Brian Horgan" -c goToG9Site aboutlabel;
+		menuItem -l "www.graphite9.com " -c goToG9Site aboutlabel23;
+		menuItem -l $version   -c goToG9Site aboutlabel33;
+		menuItem -d true;
+			
+            columnLayout -adj 1 mainCol;
+            
+          button -label "    Create Path Curves    "  -c  bh_createPathCurvesCheck but1;
+		  text -label "  Scale Path System : ";
+		  
+		  float $sysScale=1;
+		  if (`objExists("bh_PathAnimCurves")`)
+		  {$sysScale=`getAttr "bh_PathAnimCurves.scaleX"`;
+		  }
+		  
+		  
+          floatField  -minValue 0.01    -pre 2 -step 0.1  -value $sysScale -ann "Hold CTRL and Click Drag to change value interactively - release to set scale " -cc bhScalePathSystem scalePathValField;
+        
+          
+          separator -h 20 -style "in";
+		  text -label "  Scale Locators : ";
+		  float $locScale=2;
+		  floatField  -minValue 0.01    -pre 2 -step 0.1  -value $locScale -ann "Hold CTRL and Click Drag to change value interactively - release to set scale " -cc bhScaleLocators scaleLocsValField;
+        
+		  separator -h 20 -style "in";
+		  
+          string $gnd="_ground";
+          string $bdy="_body";
+		  button -label "   Create Ground Hooks for Selected    "  -c  "bh_createAHook(\"_GroundHook\")" but2;
+		  button -label "   Create Body Hooks for Selected    "  -c  "bh_createAHook(\"_BodyHook\")" but41;
+
+           separator -h 20 -style "in";
+           iconTextStaticLabel -st "textOnly"  -l "Loop Frames :";
+			
+            int $startFrame = `playbackOptions -q -min`;
+            int $stopFrame = `playbackOptions -q -max`;
+            rowColumnLayout -numberOfColumns 2;
+		intField  -minValue 0 -maxValue 9999 -value $startFrame frameStart; // numerical entry field for start frame  value
+		intField  -minValue 0 -maxValue 9999 -value $stopFrame frameStop; // numerical entry field for stop frame value
+            
+               setParent..;
+               button -label "    Attach Rig To Hooks    "  -c  bh_attachToHooks but4;
+               separator -h 20 -style "in";
+			    iconTextStaticLabel -st "textOnly"  -l "Bake Path Anim To Rig Frames :";
+			         rowColumnLayout -numberOfColumns 2;
+		intField  -minValue 0 -maxValue 9999 -value $startFrame rigBakeFrameStart; // numerical entry field for start frame  value
+		intField  -minValue 0 -maxValue 9999 -value $stopFrame rigBakeFrameStop; // numerical entry field for stop frame value
+           
+               setParent..;   
+			   
+          
+            button -label "    Bake Path Anim to Rig    "  -c  bakePathAnimToRigProc but5;
+
+	progressBar  -maxValue 100  pathAnimProgBar;
+             button -label "    Delete Path Anim System    "  -c  bh_deletePathSystemCheck but51;
+            showWindow bh_pathAnimUI;
+			window -edit -widthHeight 215 405 bh_pathAnimUI;
+			
+			
+		}
+
+
+//================================================================================================	
+//================================================================================================
+
+global proc bh_createPathCurvesCheck()
+{
+    if (!`objExists("bh_PathAnimCurves")`)
+    {
+    bh_createPathCurves;
+    print "Path Curves Created";
+    }
+    else {
+        bh_confirmDeleteCurves;
+    }
+}
+//================================================================================================	
+//================================================================================================
+global proc bh_deletePathSystemCheck()
+{
+    string $checkIt=`confirmDialog -title "Confirm" -message "Delete Path Anim System?"
+-button "Yes" -button "No" -defaultButton "Yes" -cancelButton "No" -dismissString "No"`;
+
+if ($checkIt=="Yes")
+ {
+     bh_deletePathAnimCurves;
+    
+     print "Path Anim System Removed";
+ }
+}
+//================================================================================================	
+//================================================================================================
+global proc bh_confirmDeleteCurves()
+{
+    string $checkIt=`confirmDialog -title "Confirm" -message "Delete Existing Path Curves and Create New Ones?"
+-button "Yes" -button "No" -defaultButton "Yes" -cancelButton "No" -dismissString "No"`;
+
+if ($checkIt=="Yes")
+ {
+     bh_deletePathAnimCurves;
+     bh_createPathCurves;
+     print "New Path Curves Created";
+ }
+}
+//================================================================================================	
+//================================================================================================
+
+global proc bh_deletePathAnimCurves()
+{
+    if (`objExists("bh_PathAnimHooks")`)
+    {
+    delete "bh_PathAnimHooks";
+    }
+    
+    if (`objExists("bh_PathAnimCurves")`)
+    {
+    delete "bh_PathAnimCurves";
+    }
+}
+
+//================================================================================================	
+//================================================================================================
+
+
+global proc bh_attachToHooks()
+{
+
+ // check world up option to figure out how animOffset locators should look.. 
+   string $worldUpOption=`upAxis -q -axis`;
+
+	if (!`objExists ("PathAnim_Ctrl")`)
+	{error "Please Create Path Curves first";
+	}
+	cycleCheck -e off;
+	// check is the path travel attribute keyed or not ? 
+string $isTravelKeyed[] = `listConnections -d false -type animCurve "PathAnim_Ctrl.pathTravel"`; 
+int $keyedOrNot=`size $isTravelKeyed`;
+// mute the path travel attribute while Attaching Rig To Hooks
+if ($keyedOrNot==1)
+{
+int $startFrame = `intField -query -value frameStart`;
+currentTime $startFrame;
+mute "PathAnim_Ctrl.pathTravel";
+}
+
+   //make an array of ground hook locators - only the ones which haven't been set up yet.. 
+   
+   string $groundHookLocators[];
+   clear ($groundHookLocators);
+   string $groundHookLs[] =  `ls -r 1 "*GroundHook"`; 
+   
+   for ($each in $groundHookLs)
+   {
+   string $animOffsetGrp=substituteAllString ($each, "_GroundHook" ,"_AnimOffset");// only process hooks that have not been done (that don't have offset grps)
+		   if (!`objExists ($animOffsetGrp)`){
+		   $groundHookLocators[`size $groundHookLocators`] =$each;
+		   }
+   }
+   
+   
+   for ($each in $groundHookLocators)
+   {
+   string $shapeNode[] =`listRelatives -shapes $each`;
+    delete $shapeNode;
+   
+    
+   string $rigCtrl=substituteAllString ($each, "_GroundHook" ,"");// 
+   
+   string $ng = $rigCtrl + "_AnimOffset";
+   // create an 'anim offset' locator that can be used to tweak the animation easily.. 
+   string $tempNull2[]= `spaceLocator -name $ng`;
+   float $scaleVal = `floatField -query -value scalePathValField`;
+   float $locScaleVal = `floatField -query -value scaleLocsValField`;
+   
+   if ($worldUpOption=="y")
+   {
+   setAttr ($tempNull2[0]+".localScaleX") (1*$locScaleVal);
+   setAttr ($tempNull2[0]+".localScaleZ") (4*$locScaleVal);
+   
+   }
+    if ($worldUpOption=="z")
+   {
+   setAttr ($tempNull2[0]+".localScaleX") (4*$locScaleVal);
+   setAttr ($tempNull2[0]+".localScaleZ") (1*$locScaleVal);
+   
+   }
+   
+    setAttr ($tempNull2[0]+".localScaleY") (1*$locScaleVal);
+  
+    setAttr ($tempNull2[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull2[0]+".overrideColor") 13;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   parent $tempNull2[0] $each;
+   setAttr ($tempNull2[0]+".translateX") 0;
+   setAttr ($tempNull2[0]+".translateY") 0;
+   setAttr ($tempNull2[0]+".translateZ") 0;
+   setAttr ($tempNull2[0]+".rotateX") 0;
+	setAttr ($tempNull2[0]+".rotateY") 0;
+	setAttr ($tempNull2[0]+".rotateZ") 0;
+      // create a new locator to store the animation on.. 
+    $ng = $rigCtrl + "_AnimLoc";
+   string $tempNull[]= `spaceLocator -name $ng`;
+   
+   //float $scaleVal = `floatField -query -value scalePathValField`;
+   setAttr ($tempNull[0]+".localScaleX") (1*$locScaleVal);
+    setAttr ($tempNull[0]+".localScaleY") (1*$locScaleVal);
+    setAttr ($tempNull[0]+".localScaleZ") (1*$locScaleVal);
+    setAttr ($tempNull[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull[0]+".overrideColor") 17;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   
+parent $tempNull[0] $tempNull2[0];
+select $rigCtrl; 
+select -add $tempNull[0];
+
+// snap the locator to the object
+
+parentConstraint -weight 1;
+// need to bake the animation to this locator here.. 
+select -r $tempNull[0];
+bakeProc;
+//////////////////////////////
+setInfinity -poi cycle; // make the keys loop
+
+string $findPtCns[] = `listRelatives -type parentConstraint $tempNull[0]`;
+select $findPtCns; doDelete;
+
+// delete the shape node from this locator and create ANOTHER locator to use as constraint target, lock to world etc..
+string $shapeNode3[] =`listRelatives -shapes $tempNull[0]`;
+ delete $shapeNode3;    
+   // create an 'ctrl Pivot' locator that can be used to tweak the animation easily.. 
+	$ng = $rigCtrl + "_CtrlPivot";
+   string $tempNull3[]= `spaceLocator -name $ng`;
+   //float $scaleVal = `floatField -query -value scalePathValField`;
+   setAttr ($tempNull3[0]+".localScaleX") ($locScaleVal);
+    setAttr ($tempNull3[0]+".localScaleY") ($locScaleVal);
+    setAttr ($tempNull3[0]+".localScaleZ") ($locScaleVal);
+    setAttr ($tempNull3[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull3[0]+".overrideColor") 17;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   parent $tempNull3[0] $tempNull[0];
+   setAttr ($tempNull3[0]+".translateX") 0;
+   setAttr ($tempNull3[0]+".translateY") 0;
+   setAttr ($tempNull3[0]+".translateZ") 0;
+   setAttr ($tempNull3[0]+".rotateX") 0;
+	setAttr ($tempNull3[0]+".rotateY") 0;
+	setAttr ($tempNull3[0]+".rotateZ") 0;	
+
+// attach the rig control to the Hook - switching to Point/Orient rather than parent to suit rigs with locked channels..
+	
+ // check for locked channels 
+	int $tLock=0;
+    int $rLock=0;
+    int $lockX = `getAttr -l ($rigCtrl+".tx")`;
+	if ($lockX==1)
+	{$tLock=1;
+	}   
+    int $lockRX = `getAttr -l ($rigCtrl+".rx")`;
+	if ($lockRX==1)
+	{$rLock=1;
+	}
+     
+    if ($tLock==0){
+    select -r $tempNull3[0] $rigCtrl;
+    pointConstraint -weight 1 -n "bh_pathAnim_PointConstraint";
+    }
+    
+    if ($rLock==0){
+    select -r $tempNull3[0] $rigCtrl;
+    orientConstraint -weight 1 -n "bh_pathAnim_OrientConstraint";
+    }
+	print ("Attached "+$rigCtrl+" to Hook");
+  
+   }
+   
+
+	  //make an array of body hook locators - only the ones which haven't been set up yet.. 
+   
+   string $bodyHookLocators[];
+   clear ($bodyHookLocators);
+   string $bodyHookLs[] =  `ls -r 1 "*BodyHook"`; 
+   
+   for ($each in $bodyHookLs)
+   {
+   string $animOffsetGrp=substituteAllString ($each, "_BodyHook" ,"_AnimOffset");// only process hooks that have not been done (that don't have offset grps)
+		   if (!`objExists ($animOffsetGrp)`){
+		   $bodyHookLocators[`size $bodyHookLocators`] =$each;
+		   }
+   }
+	
+	
+   
+   for ($each in $bodyHookLocators)
+   {
+   // delete the shape node of the locator attached to the motion path to make the scene more readable
+    string $shapeNode[] =`listRelatives -shapes $each`;
+    delete $shapeNode;
+	
+   string $rigCtrl=substituteAllString ($each, "_BodyHook" ,"");// 
+   string $ng = $rigCtrl + "_AnimOffset";
+   // create an 'anim offset' locator that can be used to tweak the animation easily.. 
+   float $scaleVal = `floatField -query -value scalePathValField`;
+   string $tempNull2[]= `spaceLocator -name $ng`;
+   
+   
+   
+   if ($worldUpOption=="y")
+   {
+   setAttr ($tempNull2[0]+".localScaleX") (1*$scaleVal);
+   setAttr ($tempNull2[0]+".localScaleZ") (4*$scaleVal);
+   
+   }
+    if ($worldUpOption=="z")
+   {
+   setAttr ($tempNull2[0]+".localScaleX") (4*$scaleVal);
+   setAttr ($tempNull2[0]+".localScaleZ") (1*$scaleVal);
+   
+   }
+   
+   
+    setAttr ($tempNull2[0]+".localScaleY") (1*$scaleVal);
+  
+    setAttr ($tempNull2[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull2[0]+".overrideColor") 13;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   parent $tempNull2[0] $each;
+   setAttr ($tempNull2[0]+".translateX") 0;
+   setAttr ($tempNull2[0]+".translateY") 0;
+   setAttr ($tempNull2[0]+".translateZ") 0;
+   setAttr ($tempNull2[0]+".rotateX") 0;
+	setAttr ($tempNull2[0]+".rotateY") 0;
+	setAttr ($tempNull2[0]+".rotateZ") 0;
+      // create a new locator to store the animation on.. 
+    $ng = $rigCtrl + "_AnimLoc";
+   string $tempNull[]= `spaceLocator -name $ng`;
+  
+   setAttr ($tempNull[0]+".localScaleX") 1;
+    setAttr ($tempNull[0]+".localScaleY") 1;
+    setAttr ($tempNull[0]+".localScaleZ") 1;
+    setAttr ($tempNull[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull[0]+".overrideColor") 17;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   
+parent $tempNull[0] $tempNull2[0];
+select $rigCtrl; 
+select -add $tempNull[0];
+
+// snap the locator to the object
+parentConstraint -weight 1;
+// need to bake the animation to this locator here.. 
+select -r $tempNull[0];
+bakeProc;
+
+
+
+setInfinity -poi cycle; // make the keys loop
+string $findPtCns[] = `listRelatives -type parentConstraint $tempNull[0]`;
+select $findPtCns; doDelete;
+
+// delete the shape node from this locator and create ANOTHER locator to use as constraint target, lock to world etc..
+	string $shapeNode1[] =`listRelatives -shapes $tempNull[0]`;
+	delete $shapeNode1;    
+   // create an 'ctrl Pivot' locator that can be used to tweak the animation easily.. 
+    $ng = $rigCtrl + "_CtrlPivot";
+   //float $scaleVal = `floatField -query -value scalePathValField`;
+   string $tempNull3[]= `spaceLocator -name $ng`;
+   setAttr ($tempNull3[0]+".localScaleX") (2*$scaleVal);
+    setAttr ($tempNull3[0]+".localScaleY") (2*$scaleVal);
+    setAttr ($tempNull3[0]+".localScaleZ") (2*$scaleVal);
+    setAttr ($tempNull3[0]+".overrideEnabled") 1;
+    setAttr  ($tempNull3[0]+".overrideColor") 17;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+   parent $tempNull3[0] $tempNull[0];
+   setAttr ($tempNull3[0]+".translateX") 0;
+   setAttr ($tempNull3[0]+".translateY") 0;
+   setAttr ($tempNull3[0]+".translateZ") 0;
+   setAttr ($tempNull3[0]+".rotateX") 0;
+	setAttr ($tempNull3[0]+".rotateY") 0;
+	setAttr ($tempNull3[0]+".rotateZ") 0;	
+// attach the rig control to the Hook - switching to Point/Orient rather than parent to suit rigs with locked channels..
+	
+ // check for locked channels 
+	int $tLock=0;
+    int $rLock=0;
+    int $lockX = `getAttr -l ($rigCtrl+".tx")`;
+	if ($lockX==1)
+	{$tLock=1;
+	}   
+    int $lockRX = `getAttr -l ($rigCtrl+".rx")`;
+	if ($lockRX==1)
+	{$rLock=1;
+	}
+     
+    if ($tLock==0){
+    select -r $tempNull3[0] $rigCtrl;
+    pointConstraint -weight 1 -n "bh_pathAnim_PointConstraint";
+    }
+    
+    if ($rLock==0){
+    select -r $tempNull3[0] $rigCtrl;
+    orientConstraint -weight 1 -n "bh_pathAnim_OrientConstraint";
+    }
+
+
+   
+   print ("Attached "+$rigCtrl+" to Hook");
+   
+   }
+   
+   // check is the path travel muted ? 
+	int $muted = `mute -q  "PathAnim_Ctrl.pathTravel"`; 
+	// unmute the path travel attribute if it is
+	if ($muted==1)
+	{
+	mute -disable -force "PathAnim_Ctrl.pathTravel";
+	}
+   
+   select -r PathAnim_Ctrl;
+   print "Rig Attached To Hooks";
+}
+
+
+//================================================================================================	
+//================================================================================================
+
+/// THE CREATE Curve commands here need to be edited to suit world coord axis.. 
+//create and group the curves for the path animation proc
+global proc bh_createPathCurves()
+{
+string $worldUpOption=`upAxis -q -axis`;
+
+
+$pathCurvesGrp=`group -em -name "bh_PathAnimCurves"`;
+
+string $pathCtrl;
+if ($worldUpOption=="y")
+{
+
+// create the controller that will control all motion path nodes.. 
+$pathCtrl=`curve -d 1 -p -2 10 -4 -p 2 10 -4 -p 2 10 2 -p 5 10 2 -p 0 10 6 -p -5 10 2 -p -2 10 2 -p -2 10 -4 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -n "PathAnim_Ctrl"`;
+// make all of it's regular attributes unkeyable and hidden - but don't lock them so the control can still be moved/scaled if needed
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".tx");
+setAttr -keyable false -channelBox false ($pathCtrl+".ty");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".tz");
+}
+if ($worldUpOption=="z")
+{
+
+// create the controller that will control all motion path nodes.. 
+
+$pathCtrl=`curve -d 1 -p  -2 4 10 -p  2 4 10 -p 2 -2 10 -p 5 -2  10 -p  0 -6 10 -p  -5 -2 10 -p -2 -2 10 -p -2 4 10     -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -n "PathAnim_Ctrl"`;
+
+// make all of it's regular attributes unkeyable and hidden - but don't lock them so the control can still be moved/scaled if needed
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".ty");
+setAttr -keyable false -channelBox false ($pathCtrl+".tz");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".tx");
+}
+
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".rx");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".ry");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".rz");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".sx");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".sy");
+setAttr -lock true -keyable false -channelBox false ($pathCtrl+".sz");
+setAttr -lock true -keyable false -channelBox false($pathCtrl+".v");
+// add the Path travel attribute
+ string $pathTravelAt="pathTravel"; 
+addAttr -ln $pathTravelAt  -at double -minValue 0 -maxValue 100 ($pathCtrl);
+ setAttr -e-keyable true ($pathCtrl+"."+$pathTravelAt );
+ string $pathLenAt="pathLength"; 
+ addAttr -ln $pathLenAt  -at double -minValue 0 -maxValue 100000 ($pathCtrl);
+ setAttr -e-keyable false -cb true ($pathCtrl+"."+$pathLenAt );
+ 
+ 
+ string $groundCurve;
+ string $bodyCurve;
+ if ($worldUpOption=="y")
+{
+$groundCurve = `curve -d 3 -p 0 0 -10 -p 0 0 0 -p 0 0 10 -p 0 0 20 -p 0 0 30 -p 0 0 40 -p 0 0 50 -p 0 0 60 -p 0 0 70 -p 0 0 80 -p 0 0 90 -p 0 0 100 -p 0 0 110 -p 0 0 120 -p 0 0 130 -p 0 0 140 -p 0 0 150 -p 0 0 160 -p 0 0 170 -p 0 0 180 -p 0 0 190 -p 0 0 200 -p 0 0 210 -p 0 0 220 -p 0 0 230 -p 0 0 240 -p 0 0 250 -p 0 0 260 -p 0 0 270 -p 0 0 280 -p 0 0 290 -p 0 0 300 -k 0 -k 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 -k 11 -k 12 -k 13 -k 14 -k 15 -k 16 -k 17 -k 18 -k 19 -k 20 -k 21 -k 22 -k 23 -k 24 -k 25 -k 26 -k 27 -k 28  -k 29 -k 29 -k 29 -name "groundCurve"` ;
+$bodyCurve   = `curve -d 3 -p 0 5 -10 -p 0 5 0 -p 0 5 10 -p 0 5 20 -p 0 5 30 -p 0 5 40 -p 0 5 50 -p 0 5 60 -p 0 5 70 -p 0 5 80 -p 0 5 90 -p 0 5 100 -p 0 5 110 -p 0 5 120 -p 0 5 130 -p 0 5 140 -p 0 5 150 -p 0 5 160 -p 0 5 170 -p 0 5 180 -p 0 5 190 -p 0 5 200 -p 0 5 210 -p 0 5 220 -p 0 5 230 -p 0 5 240 -p 0 5 250 -p 0 5 260 -p 0 5 270 -p 0 5 280 -p 0 5 290 -p 0 5 300-k 0 -k 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 -k 11 -k 12 -k 13 -k 14 -k 15 -k 16 -k 17 -k 18  -k 19 -k 20 -k 21 -k 22 -k 23 -k 24 -k 25 -k 26 -k 27 -k 28  -k 29 -k 29 -k 29 -name "bodyCurve"` ;
+}
+if ($worldUpOption=="z")
+{
+$groundCurve = `curve -d 3 -p  0 10   0 -p 0 0 0 -p 0 -10 0 -p 0 -20 0 -p 0 -30 0 -p 0 -40  0 -p 0 -50 0 -p  0 -60 0 -p  0 -70 0 -p  0 -80 0 -p  0 -90  0 -p  0 -100  0 -p  0 -110  0 -p  0 -120 0 -p 0 -130  0 -p  0 -140  0 -p  0 -150  0 -p  0  -160  0 -p  0 -170  0 -p 0 -180  0 -p 0 -190 0 -p  0 -200  0 -p  0 -210  0 -p 0 -220  0 -p 0 -230  0 -p 0 -240  0 -p 0 -250 0 -p 0 -260  0 -p 0 -270 0 -p 0 -280  0 -p  0 -290  0 -p 0  -300  0 -k 0 -k 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 -k 11 -k 12 -k 13 -k 14 -k 15 -k 16 -k 17 -k 18 -k 19 -k 20 -k 21 -k 22 -k 23 -k 24 -k 25 -k 26 -k 27 -k 28  -k 29 -k 29 -k 29 -name "groundCurve"` ;
+$bodyCurve   = `curve -d 3 -p  0 10   5 -p 0 0 5 -p 0 -10 5 -p 0 -20 5 -p 0 -30 5 -p 0 -40  5 -p 0 -50 5 -p  0 -60 5 -p  0 -70 5 -p  0 -80 5 -p  0 -90  5 -p  0 -100  5 -p  0 -110  5 -p  0 -120 5 -p 0 -130  5 -p  0 -140  5 -p  0 -150  5 -p  0  -160  5 -p  0 -170  5 -p 0 -180  5 -p 0 -190 5 -p  0 -200  5 -p  0 -210  5 -p 0 -220  5 -p 0 -230  5 -p 0 -240  5 -p 0 -250 5 -p 0 -260  5 -p 0 -270 5 -p 0 -280  5 -p  0 -290  5 -p 0  -300  5 -k 0 -k 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 -k 11 -k 12 -k 13 -k 14 -k 15 -k 16 -k 17 -k 18  -k 19 -k 20 -k 21 -k 22 -k 23 -k 24 -k 25 -k 26 -k 27 -k 28  -k 29 -k 29 -k 29 -name "bodyCurve"` ;
+}
+
+parent $pathCtrl $groundCurve $bodyCurve  $pathCurvesGrp;
+bh_lockAllChannels($groundCurve);
+bh_lockAllChannels($bodyCurve);
+
+// set up the curve info node to keep track of the length of the ground curve
+
+string $sCurve = $groundCurve;
+
+string $curveInfoNode = `arclen -ch on $sCurve`;
+addAttr -ln "lenghtCur"  -at double  ($sCurve);
+setAttr -e-keyable false ($sCurve+".lenghtCur");
+addAttr -ln "lenghtDef"  -at double  ($sCurve);
+setAttr -e-keyable false ($sCurve+".lenghtDef");
+addAttr -ln "origLen"  -at double  ($sCurve);
+setAttr -e-keyable false ($sCurve+".origLen");
+connectAttr -f ($curveInfoNode+".arcLength") ($sCurve+".lenghtCur");
+float $defLength = `getAttr ($sCurve+".lenghtCur")`;
+setAttr ($sCurve+".lenghtDef") `getAttr ($sCurve+".lenghtCur")`;
+setAttr ($sCurve+".origLen") `getAttr ($sCurve+".lenghtCur")`;
+string $lnCalc = `shadingNode -asUtility multiplyDivide -n ($groundCurve+"LenghtCalc")`;
+setAttr ($groundCurve+"LenghtCalc.operation") 2;
+//////////////////////////////////////////////////////
+string $worldMultNode = `shadingNode -asUtility multiplyDivide -name "worldMultNode"`;
+setAttr ($worldMultNode+".input2X") 1;
+
+float $scaleVal = `floatField -query -value scalePathValField`;
+setAttr ("bh_PathAnimCurves.scaleX") $scaleVal;
+setAttr ("bh_PathAnimCurves.scaleY") $scaleVal;
+setAttr ("bh_PathAnimCurves.scaleZ") $scaleVal;
+
+connectAttr -force ($sCurve+".lenghtCur") ($groundCurve+"LenghtCalc.input1X");
+connectAttr -force ($sCurve+".lenghtDef") ($worldMultNode+".input1X");
+connectAttr -f "bh_PathAnimCurves.scaleX" ($worldMultNode+".input2X");
+connectAttr -force ($worldMultNode+".outputX") ($groundCurve+"LenghtCalc.input2X");
+connectAttr -force ($groundCurve+"LenghtCalc.outputX") ( $pathCtrl+"."+$pathLenAt   );
+
+setAttr -keyable false -channelBox false "bh_PathAnimCurves.sx";
+setAttr -keyable false -channelBox false "bh_PathAnimCurves.sy";
+setAttr -keyable false -channelBox false "bh_PathAnimCurves.sz";
+
+
+
+select -r "PathAnim_Ctrl";
+
+}
+	
+//================================================================================================	
+//================================================================================================
+
+
+    global proc bakeProc () // added hide UI option.. 
+    {
+	print "Baking... please wait";
+	global string $gMainPane;
+	// disable viewport while baking if the option is enabled (it is by default)
+	int $hideOption = `menuItem -query -cb  disableViewCBox`;// returns 0 or 1 for off/on
+	if ($hideOption ==1){	
+	paneLayout -e -manage false $gMainPane;
+	}
+	
+    int $startFrame = `intField -query -value frameStart`;
+    int $stopFrame = `intField -query -value frameStop`;
+    bakeResults -simulation 1 -time ($startFrame+":"+$stopFrame) -pok 1 ;
+	
+	// show viewport again
+	if ($hideOption ==1){
+	paneLayout -e -manage true $gMainPane;
+	}
+	
+    }
+	
+	
+//================================================================================================	
+//================================================================================================
+
+
+
+ global proc bakePathAnimToRigProc ()
+    {
+		
+	// build an array of the controllers to bake.. 
+	string $rigCtrls[];
+   clear ($rigCtrls);
+   string $groundHookLs[] =  `ls -r 1 "*GroundHook"`; 
+   string $bodyHookLs[] =  `ls -r 1 "*BodyHook"`; 
+
+	for ($each in $groundHookLs)
+	{
+	string $rigCtrl=substituteAllString ($each, "_GroundHook" ,"");// 
+	 $rigCtrls[`size $rigCtrls`] =$rigCtrl;
+	}
+	for ($each in $bodyHookLs)
+	{
+	string $rigCtrl=substituteAllString ($each, "_BodyHook" ,"");// 
+	$rigCtrls[`size $rigCtrls`] =$rigCtrl;
+	}
+	// make sure rig is attached before baking..
+	string $animOffsetLocs[] =  `ls -r 1 "*AnimOffset"`; 
+	if (`size $animOffsetLocs`==0)
+	{
+	error "No Rig Ctrls Attached to Path System.. Bake not attempted";
+	}
+	
+	global string $gMainPane;
+	// disable viewport while baking if the option is enabled (it is by default)
+	int $hideOption = `menuItem -query -cb  disableViewCBox`;// returns 0 or 1 for off/on
+	if ($hideOption ==1){	
+	paneLayout -e -manage false $gMainPane;
+	}
+	select -r $rigCtrls;
+	
+	// bake them! 
+	cycleCheck -e off;
+	print ("Baking Path Animation..");
+    int $startFrame = `intField -query -value rigBakeFrameStart`;
+    int $stopFrame = `intField -query -value rigBakeFrameStop`;
+    int $frameCount =($stopFrame-$startFrame);
+    currentTime $startFrame;
+	setKeyframe;
+  progressBar -edit -pr 0 pathAnimProgBar;//update the progress bar
+    float $stepVal=(100/$frameCount);
+    
+   
+	for($f=$startFrame;$f<($stopFrame+1);$f++)
+	{
+	progressBar -edit -step $stepVal pathAnimProgBar;//update the progress bar
+	currentTime $f;
+	
+	setKeyframe;
+	  }
+	  progressBar -edit -pr 100 pathAnimProgBar;//update the progress bar
+	  select -cl;
+	  currentTime $startFrame;
+	 print "Path Animation Baked to Rig.. Now ready to Delete Path Anim System";
+	 // restore the UI if it was hidden 
+	 
+	 	if ($hideOption ==1){
+	paneLayout -e -manage true $gMainPane;
+	}
+	 
+	 
+    }
+
+//================================================================================================	
+//================================================================================================	
+global 	proc bhScalePathSystem()
+	{
+	 if (`objExists("bh_PathAnimCurves")`)
+		{
+	float $scaleVal = `floatField -query -value scalePathValField`;
+	setAttr ("bh_PathAnimCurves.scaleX") $scaleVal;
+	setAttr ("bh_PathAnimCurves.scaleY") $scaleVal;
+	setAttr ("bh_PathAnimCurves.scaleZ") $scaleVal;
+	
+		}
+	}
+
+//================================================================================================	
+//================================================================================================
+
+	
+global 	proc bh_resetCurvePoints()
+{
+
+	// check the coords system : 
+	string $worldUpOption=`upAxis -q -axis`;
+	// set up some variables to suit Y up or Z Up (beta!) 
+	string $up;
+	string $forward;
+	string $side;
+	int $neg;
+	
+	if ($worldUpOption=="y")
+	{
+	$up="y";
+	$forward="z";
+	$side="x";
+	$neg=1;
+	
+	}
+	if ($worldUpOption=="z")
+	{
+	$up="z";
+	$forward="y";
+	$side="x";
+	$neg=-1;
+	}
+	
+	string $groundCurveShp[] =`listRelatives -s "groundCurve"`;
+	string $bodyCurveShp[] =`listRelatives -s "bodyCurve"`;
+int $cvs=`getAttr ($groundCurveShp[0]+".spans")`;
+int $deg=`getAttr ($groundCurveShp[0]+".degree")`;
+int $totalCurvePoints=$cvs+$deg;
+
+
+
+ string $selV[]= `filterExpand -sm 28 -ex 1`;// get the selected curve CVs 
+ int $curvePointCnt=`size $selV`;
+ 
+ for ($each in $selV)
+ {
+setAttr  ($each+"."+$side+"Value") 0; // reset x to 0.. that's true for all points.. 
+// figure out if it's a ground or body curve point      
+string $buffer[];
+tokenize $each "." $buffer;
+string $curveNameF = ($buffer[0] + ".");
+string $curveNameStart = ($buffer[0]);
+// extract the index number of the cv.. bit hacky.. but works.. 
+string $curveNameE = ($buffer[1] + "cv");
+string $curvePointNumName1=substituteAllString ($curveNameE, "cv[" ,"");// 
+string $curvePointNumName2=substituteAllString ($curvePointNumName1, "]cv" ,"");// 
+int $curveZPoint=$curvePointNumName2;
+//print $curveZPoint;
+
+
+
+int $yPos=0;
+if ($curveNameStart=="bodyCurve")
+    {
+    $yPos=5;
+    }
+setAttr  ($each+"."+$up+"Value") $yPos; // reset y to 0 or 5..
+
+// now need to figure out Z postion for the point..
+int $zPos=-10;
+float $forwardOffset=(310/($totalCurvePoints-1));
+$zPos=(($zPos+($forwardOffset*$curveZPoint))*$neg);
+setAttr  ($each+"."+$forward+"Value") $zPos; // reset z to it's default value
+
+ }
+ }
+ 
+ 
+//================================================================================================	
+//================================================================================================
+ // NB THIS NEEDS TO BE TWEAKED TO SUIT World Up Option
+ /////////////////////////////////////////////////////////
+ global proc calculateHookOffsets(string $ctrls[], string $hooks[], string $hookAttr[], string $curveNames[])
+{
+    int $selCount=`size $ctrls`;
+	
+	// check the coords system : 
+	string $worldUpOption=`upAxis -q -axis`;
+	// set up some variables to suit Y up or Z Up (beta!) 
+	string $upD;
+	string $forwardD;
+	string $sideD;
+	
+	if ($worldUpOption=="y")
+	{
+	$upD="Y";
+	$forwardD="Z";
+	$sideD="X";
+	
+	}
+	if ($worldUpOption=="z")
+	{
+	$upD="Z";
+	$forwardD="Y";
+	$sideD="X";
+	
+	}
+	
+
+    //for ($each in $ctrls)
+    for ($cnt=0;$cnt<$selCount;$cnt++ )
+    {
+        
+        string $each=$ctrls[$cnt];
+        // create a temporary locator to use as target for distance
+    string $distLocator[]=`spaceLocator -n ($each+"_tempDistanceLoc")`;
+    string $tempPointCons[]=`pointConstraint $each $distLocator[0] `;
+    delete $tempPointCons;
+    // position it at world X zero and the correct height depending on whether it's a ground or body hook..
+    setAttr ($distLocator[0]+".translate"+$sideD) 0;
+    string $hookToUse;
+    if ($curveNames[$cnt]=="groundCurve")
+    {
+    $hookToUse=($each+"_GroundHook") ;   
+    setAttr ($distLocator[0]+".translate"+$upD) 0;
+    }
+    if ($curveNames[$cnt]=="bodyCurve")
+    {
+    $hookToUse=($each+"_BodyHook") ; 
+    float $yMult=`getAttr ("bh_PathAnimCurves.scaleX") `;
+    float $height =($yMult*5);
+    setAttr ($distLocator[0]+".translate"+$upD) $height;
+    }
+    
+    // now attach a distance node between the hook and this temp locator.. 
+    
+    //create the distance node
+    string $distanceShape = `distanceDimension  -sp -1.0 4.0 1.0 -ep -1.0 -0.0 1.0 `;
+    string $distanceNodeLocs[] = `listConnections $distanceShape`;
+    //attach the distance locators 
+    pointConstraint $distLocator[0] $distanceNodeLocs[0];
+    
+    // now run through the loop to figure out the best offset for the hook..
+    float $c=0.0;
+	float $minDistance=10000;
+	float $curOffset=0;
+	
+	while ($c<20)
+    	{
+    	setAttr ($hookAttr[$cnt]) $c;
+    	// snap the 2nd distance locator to the hook (repeat this every cycle of the distance check proc..
+    // avoids a cycle error that using a point constraint would cause
+    	bh_snapToPosition ($distanceNodeLocs[1], $hookToUse); //
+    	float $curDistance = `getAttr ($distanceShape+".distance") `;
+    	
+        	if ($curDistance<$minDistance)
+        	{
+        	   // print $curDistance;
+           $minDistance=$curDistance;
+       	   $curOffset=$c;
+            } 	
+        $c=$c+0.05;
+    	}
+  setAttr ($hookAttr[$cnt]) $curOffset;
+  
+  // delete the temp stuff to clean up the scene.. 
+    string $distanceTransforms[] =`listRelatives -p $distanceShape`;
+    delete $distanceNodeLocs $distanceTransforms $distLocator[0];
+    
+    }
+   if ($selCount==2)
+   {
+   string $checkIt=`confirmDialog -title "Confirm" -message "Two controllers were selected - are these a matching pair of left/right controllers?"
+-button "Yes" -button "No" -defaultButton "Yes" -cancelButton "No" -dismissString "No"`;
+
+if ($checkIt=="Yes")
+ {
+    float $hookAt1=`getAttr $hookAttr[0]`;
+	float $hookAt2=`getAttr $hookAttr[1]`;
+	float $hookAverage=(($hookAt1+$hookAt2)/2);
+	setAttr $hookAttr[0] $hookAverage;
+	setAttr $hookAttr[1] $hookAverage;
+	print "Averaged out both hook offsets for this pair of controls";
+ }
+       
+   } 
+   select -r PathAnim_Ctrl ;
+}
+
+//================================================================================================	
+//================================================================================================
+
+
+    global proc bh_snapToPosition (string $toSnap, string $target)
+    {
+    float $t[] = `xform -q -ws -t $target`;
+    xform -ws -t $t[0] $t[1] $t[2] $toSnap;
+    }
+
+//================================================================================================	
+//================================================================================================
+
+ global proc bh_createAHook(string $gndOrBdy)
+    {
+        
+	// check the paths exist.	
+		if (!`objExists ("PathAnim_Ctrl")`)
+	{error "Please Create Path Curves first";
+	}
+	
+	
+	
+	
+	string $sel[]=`ls -sl`;	
+	
+ 	// create a group for the hooks if they don't exist
+	if (!`objExists ("bh_PathAnimHooks")`)
+	{string $hooksGrp=`group -em -n "bh_PathAnimHooks"`;
+	bh_lockAllChannels($hooksGrp);
+	}
+
+	// setting up arrays for offset hooks proc
+	string $ctrl[];
+	clear $ctrl;
+	string $hook[];
+	clear $hook;
+	string $attrs[];
+	clear $attrs;
+	string $curveNames[];
+	clear $curveNames;		
+		
+		
+	    for ($each in $sel)
+    {
+        string $ng = $each + $gndOrBdy;
+		string $curveToUse;
+		if ($gndOrBdy=="_GroundHook")
+		{
+		$curveToUse="groundCurve";
+		}
+		if ($gndOrBdy=="_BodyHook")
+		{
+		$curveToUse="bodyCurve";
+		}
+				
+		$ctrl[`size $ctrl`] = $each;
+		$hook[`size $hook`] = $ng;
+		
+		$curveNames[`size $curveNames`]=$curveToUse;
+		
+		//$curveNames[`size $curveNames`]="bodyCurve";
+string $tempNull[]= `spaceLocator -name $ng`;
+parent $tempNull[0] bh_PathAnimHooks;
+select $each; 
+select -add $tempNull[0];
+float $scaleVal = `floatField -query -value scalePathValField`;
+setAttr ($tempNull[0]+".localScaleX") (5*$scaleVal);
+setAttr ($tempNull[0]+".localScaleY") (5*$scaleVal);
+setAttr ($tempNull[0]+".localScaleZ") (5*$scaleVal);
+setAttr ($tempNull[0]+".overrideEnabled") 1;
+setAttr  ($tempNull[0]+".overrideColor") 16;// 16 for white, 17 for yellow - look in Settings/Prefs>Colors>advanced tab
+// snap the locator to the object
+parentConstraint -weight 1;
+string $findPtCns[] = `listRelatives -type parentConstraint $tempNull[0]`;
+select $findPtCns; doDelete;
+
+select -r $tempNull[0];
+
+
+bh_attachLocatorsToPath($curveToUse, "PathAnim_Ctrl");	// 
+
+
+
+	string $rigCtrlname=substituteAllString ($each, ":" ,"_");// cleaning up the controller name so that referenced rigs don't make illegal characters in attributes..
+	string $pathOffsetAttr=($rigCtrlname+$gndOrBdy+"Offset"); // make an offset attribute for THIS LOCATOR 
+	$attrs[`size $attrs`]=("PathAnim_Ctrl."+$pathOffsetAttr);		
+			
+	
+		
+	print ("Created Body Hook for "+$each);
+    }
+    calculateHookOffsets($ctrl,$hook,$attrs,$curveNames);	
+		
+		
+	
+}		
+		
+		
+//================================================================================================	
+//================================================================================================		
+		
+
+// attach the locators to a path proc..
+global proc bh_attachLocatorsToPath(string $pathCurve, string $ctrl)
+{
+string $locs[]= `ls -sl`; // these are all the locators that will be attached to the path.. 
+
+for ($eachLoc in $locs)
+{
+    string $pathTravelAttr=".pathTravel"; // this can be dymanic later.. 
+    string $rigCtrlname=substituteAllString ($eachLoc, ":" ,"_");// cleaning up the controller name so that referenced rigs don't make illegal characters in attributes..
+    string $pathOffsetAttr=($rigCtrlname+"Offset"); // make an offset attribute for THIS LOCATOR 
+    // add the new offset attribute to the control 
+  addAttr -ln $pathOffsetAttr  -at double  ($ctrl);
+   setAttr -e-keyable false -cb true ($ctrl+"."+$pathOffsetAttr );
+    
+
+select -r $eachLoc $pathCurve; // select the locator and the path to connect it to
+////////// THIS SECTION SETS UP THE MOTION PATH NODE AND CONNECTS IT TO THE CONTROLLER
+
+string $curveShp[]=`listRelatives -s $pathCurve `;
+string $motionPathNode=`createNode motionPath`;
+//connect the curve shape to the motionpath node
+connectAttr -f ($curveShp[0]+".worldSpace[0]") ($motionPathNode+".geometryPath");
+
+//set up the motion path node settings..
+setAttr ($motionPathNode+".fractionMode") (true);
+
+
+
+// check is maya set to Y or Z up.. 
+string $worldUpOption=`upAxis -q -axis`;
+
+if ($worldUpOption=="y")
+{
+
+setAttr ($motionPathNode+".worldUpType") 3;
+// 
+setAttr ($motionPathNode+".worldUpVectorX") 0;
+setAttr ($motionPathNode+".worldUpVectorY") 1;
+setAttr ($motionPathNode+".worldUpVectorZ") 0;
+/// 
+setAttr ($motionPathNode+".follow") (true);
+setAttr ($motionPathNode+".frontAxis") 0;
+setAttr ($motionPathNode+".upAxis") 1;
+}
+if ($worldUpOption=="z")
+{
+setAttr ($motionPathNode+".worldUpType") 3;
+// 
+setAttr ($motionPathNode+".worldUpVectorX") 0;
+setAttr ($motionPathNode+".worldUpVectorY") 0;
+setAttr ($motionPathNode+".worldUpVectorZ") 1;
+/// 
+
+setAttr ($motionPathNode+".follow") (true);
+setAttr ($motionPathNode+".frontAxis") 1;
+setAttr ($motionPathNode+".upAxis") 2;
+/// 
+setAttr ($motionPathNode+".inverseFront") 1;
+}
+
+//now connect the translates from the motionpath node directly.. 
+connectAttr -f ($motionPathNode+".xCoordinate") ($eachLoc+".translateX");
+connectAttr -f ($motionPathNode+".yCoordinate") ($eachLoc+".translateY");
+connectAttr -f ($motionPathNode+".zCoordinate") ($eachLoc+".translateZ");
+connectAttr -f ($motionPathNode+".rotateX") ($eachLoc+".rotateX");
+connectAttr -f ($motionPathNode+".rotateY") ($eachLoc+".rotateY");
+connectAttr -f ($motionPathNode+".rotateZ") ($eachLoc+".rotateZ");
+connectAttr -f ($motionPathNode+".rotateOrder") ($eachLoc+".rotateOrder");
+
+//create a multiply divide node to remap values from 0-100 instead of 0-1 for offset/Path travel
+
+// create a plus minus node to connect to the uValue
+string $offsetNode =`shadingNode -asUtility plusMinusAverage`;
+string $offsetMultNode=`shadingNode -asUtility multiplyDivide`;
+setAttr ($offsetMultNode+".input2X") 0.01;
+
+connectAttr -f ($offsetNode+".output1D") ($offsetMultNode+".input1X");
+
+connectAttr -f  ($offsetMultNode+".outputX") ($motionPathNode+".uValue");
+
+// plug the pathTravel and pathOffset attributes into the plus minus node
+connectAttr -f ($ctrl+$pathTravelAttr) ($offsetNode+".input1D[0]");
+connectAttr -f ($ctrl+"."+$pathOffsetAttr) ($offsetNode+".input1D[1]");
+
+////////////// END MOTION PATH SETUP.... 
+
+
+
+}
+
+select -r $ctrl; // select the controller so the rig can be tested and offsets can be adjusted etc.. 
+}
+
+//================================================================================================	
+//================================================================================================
+
+
+global proc bh_lockAllChannels(string $object)
+{
+setAttr -lock true -keyable false -channelBox false ($object+".tx");
+setAttr -lock true -keyable false -channelBox false ($object+".ty");
+setAttr -lock true -keyable false -channelBox false ($object+".tz");
+setAttr -lock true -keyable false -channelBox false ($object+".rx");
+setAttr -lock true -keyable false -channelBox false ($object+".ry");
+setAttr -lock true -keyable false -channelBox false ($object+".rz");
+setAttr -lock true -keyable false -channelBox false ($object+".sx");
+setAttr -lock true -keyable false -channelBox false ($object+".sy");
+setAttr -lock true -keyable false -channelBox false ($object+".sz");
+}
+
+//================================================================================================	
+//================================================================================================
+
+global proc bh_hideAnimOffsetLocators()
+{
+    int $state = (1-`menuItem -query -cb  hao`);
+    string $animOffsetLocators[]=`ls -r 1 "*_AnimOffset"`;
+    for ($each in $animOffsetLocators)
+    {
+        string $offsetShape[]=`listRelatives -s $each`;
+        setAttr ($offsetShape[0]+".visibility") $state;
+    }
+    
+    
+}
+
+//================================================================================================	
+//================================================================================================
+
+global proc bh_hideCtrlPivotLocators()
+{
+    int $state = (1-`menuItem -query -cb  cpl`);
+    string $animOffsetLocators[]=`ls -r 1 "*_CtrlPivot"`;
+    for ($each in $animOffsetLocators)
+    {
+        string $offsetShape[]=`listRelatives -s $each`;
+        setAttr ($offsetShape[0]+".visibility") $state;
+    }
+    
+    
+}
+//================================================================================================	
+//================================================================================================
+global proc bh_restoreTheView()
+{
+global string $gMainPane;
+paneLayout -e -manage true $gMainPane;
+}
+
+//================================================================================================	
+//================================================================================================
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// TOOLS ///////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+global proc bh_fixStretchedRig(float $blendVal) // helper proc to fix stretched rig due to changed path length
+{
+string $ctrl="PathAnim_Ctrl";
+string $attrNames[] =`listAttr -cb  -sn $ctrl`;
+float $lowestVal=100;
+string $attrNameArray[];
+clear $attrNameArray;
+
+for ($each in $attrNames)
+{
+    if ($each!="pathLength")
+    {
+        $attrNameArray[`size $attrNameArray`] =$each;
+        float $curAttr=`getAttr ($ctrl+"."+$each)`;
+        if ($curAttr<$lowestVal)
+        {
+            $lowestVal=$curAttr;
+        }
+        
+    }
+}
+int $attrCnt=`size $attrNameArray`;
+
+
+for ($eachAttr in $attrNameArray)
+{    
+    float $thisAttr=`getAttr ($ctrl+"."+$eachAttr)`;
+    if ($thisAttr>$lowestVal)
+    {
+        float $attrDif=(($thisAttr-$lowestVal)*$blendVal);
+        float $attrNewVal=$thisAttr-$attrDif;
+        setAttr ($ctrl+"."+$eachAttr) $attrNewVal;
+    }
+}
+}
+
+
+//================================================================================================	
+//================================================================================================
+
+global proc bh_stretchFixGUI()
+{   {
+    if (`window -exists bh_stretchFixGUI`)
+        deleteUI bh_stretchFixGUI;
+        
+        window -toolbox 1 -width 180 -t "bh_stretchFix" -mxb 0 -mnb 0 bh_stretchFixGUI;
+        columnLayout -adj 1 -rowSpacing 1 -columnWidth 50 mainCol;
+        
+        text "Adjust Range";
+        floatSliderGrp 
+        -field 1
+    	-minValue .001 -maxValue 0.2
+    	-fieldMinValue .001 -fieldMaxValue 0.5
+    	-value .1
+		-step 0.001
+    	"SFRange";
+		
+
+        button -label " Reduce Stretch " -c "bh_stretchBtnProc(1)" sfb10;
+        separator;
+        button -label " Increase Stretch " -c "bh_stretchBtnProc(-1)" sfb11;
+	
+
+        showWindow bh_stretchFixGUI;
+		window -edit -widthHeight  250 95 bh_stretchFixGUI;
+   
+    }
+
+}
+
+//================================================================================================	
+//================================================================================================
+
+global proc bh_stretchBtnProc (float $multiplier)
+{
+    float $stretchRange=`floatSliderGrp -q -value SFRange`;
+    float $stretchVal=$stretchRange*$multiplier;
+
+    bh_fixStretchedRig($stretchVal);  
+}
+
+
+
+//================================================================================================	
+//================================================================================================
+
+
+
+// bh_footLocker - helper tool to use with bh_pathAnim V1.01 141217 
+// renamed to bh_footLockerPA to differentiate it from stand alone version.. 
+
+global proc bh_footLockerPA()
+    {
+    if (`window -exists bh_footLockerUI`)
+        deleteUI bh_footLockerUI;
+        
+        window -toolbox 1 -width 180 -t "bh_footLocker" -mxb 0 -mnb 0 bh_footLockerUI;
+        columnLayout -adj 1 -rowSpacing 1 -columnWidth 180 mainCol;
+		
+        rowColumnLayout -numberOfColumns 2;
+
+      
+	   button -label "Contact Start Frame" -ann "Set the first frame the foot contacts the ground" -command bh_getConFrame key1; 	
+	   intField  -minValue 0 -maxValue 9999 -value 0 conStartField; // numerical entry field for start frame  value
+	   button -label "Contact End Frame" -ann "Set the last frame the foot is on the ground" -command bh_getConEndFrame key2; 	
+	   intField  -minValue 0 -maxValue 9999 -value 0 conEndField; // numerical entry field for start frame  value
+	   button -label "Reset Frame " -ann "Choose the frame the locator should return to it's default position - typically half way between End Frame and Next Contact Frame" -command bh_getResetFrame key3; 	
+		intField  -minValue 0 -maxValue 9999 -value 0 resetField; // numerical entry field for start frame  value
+		button -label "Next Contact Frame" -ann "Choose the first frame of the next contact sequence"  -command bh_getNewConFrame key4; 
+		intField  -minValue 0 -maxValue 9999 -value 0 newConField; // numerical entry field for start frame  value
+		
+	setParent..;   	
+	button -label " Lock it Down! " -ann "Run the Lock process for the selected object(s)" -command bh_footLockerProc key5; 	
+    showWindow bh_footLockerUI;
+	window -edit -widthHeight 180 122 bh_footLockerUI;
+    
+    }
+    //bh_footLocker;
+	
+	// UI procs//
+	global proc bh_getConFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame conStartField;
+	}
+	global proc bh_getConEndFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame conEndField;
+	}
+	global proc bh_getResetFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame resetField;
+	}    
+	global proc bh_getNewConFrame()
+	{ int $curFrame = `currentTime -q`;
+	 intField -e -value $curFrame newConField;
+	}
+    
+    //////////////////////////
+    
+    global proc bh_footLockerProc ()
+    {
+	string $origSel[]=`ls -sl`;
+
+    int $startFrame = `intField -query -value conStartField`;
+
+	int $stopFrame= `intField -query -value conEndField`;	
+	int $resetFrame= `intField -query -value resetField`;
+	int $newContactFrame = `intField -query -value newConField`;
+	
+	// some error checking!
+	
+	if ($stopFrame<$startFrame)
+	{error "Contact End Frame is less than Contact Start Frame!";
+	}
+	
+	if ($resetFrame<$stopFrame)
+	{error "Reset Frame is less than Contact End Frame!";
+	}
+	if ($newContactFrame<$resetFrame)
+	{error "Next Contact Frame is less than Reset Frame!";
+	}
+	
+	if ($stopFrame==$startFrame)
+	{error "Contact End Frame is the same as Contact Start Frame!";
+	}
+	
+	if ($resetFrame==$stopFrame)
+	{error "Reset Frame is the same as Contact End Frame!";
+	}
+	if ($newContactFrame==$resetFrame)
+	{error "Next Contact Frame is the same as Reset Frame!";
+	}
+	
+	currentTime $startFrame;
+	
+	for ($each in $origSel)
+	{
+	// store the current world space coords .. 
+	float $CurWSRotation[] = `xform -q -ws -ro $each `;
+	float $CurWSPosition[] = `xform -q -ws -t $each `;
+	
+
+	//// key the locked section.. 
+	  for($f=$startFrame;$f<($stopFrame);$f++)
+	{
+	currentTime $f;
+	xform -ws -ro $CurWSRotation[0] $CurWSRotation[1] $CurWSRotation[2] $each ;
+	xform -ws -t $CurWSPosition[0] $CurWSPosition[1] $CurWSPosition[2] $each ;
+	setKeyframe;
+	  }
+	  
+	  // do the reset here
+	  currentTime $resetFrame;
+	  bh_zeroPosRot;
+	  setKeyframe;
+	  
+	  // move on to the new contact frame here
+	  currentTime $newContactFrame;
+	  //reset and key again here in case there are other keyframes further down the timeline
+	  bh_zeroPosRot;
+	  setKeyframe; // also makes it clear which is the new contact frame.. 
+	  
+	  }
+
+	  // update the fields here .. .
+	  int $addFramesVal=$newContactFrame-$startFrame;
+	  intField -e -value ($startFrame+$addFramesVal) conStartField;
+	  intField -e -value ($stopFrame+$addFramesVal) conEndField;
+	  intField -e -value ($resetFrame+$addFramesVal) resetField;
+	  intField -e -value ($newContactFrame+$addFramesVal) newConField;
+	  
+	  select -r $origSel;
+    }
+   
+   global proc bh_zeroPosRot()
+   {
+   string $sel[]=`ls -sl`;
+   for ($each in $sel)
+	   {
+	   setAttr ($each+".translateX") 0;
+	   setAttr ($each+".translateY") 0;
+	   setAttr ($each+".translateZ") 0;
+	   setAttr ($each+".rotateX") 0;
+	   setAttr ($each+".rotateY") 0;
+	   setAttr ($each+".rotateZ") 0;
+	   setKeyframe;
+	   
+	   }
+	  
+   }
+   
+  //================================================================================================	
+//================================================================================================
+ 
+ // bh_keyFor - helper tool to use with bh_pathAnim V1.01 131217 
+
+// select any object and key -in current worldspace position/rotation - for a range of frames starting on current frame. 
+// 'pre roll' field allows the keyed range to start earlier than current frame if desired
+
+global proc bh_keyForPA()
+    {
+    if (`window -exists bh_keyForUI`)
+        deleteUI bh_keyForUI;
+        
+        window -toolbox 1 -width 180 -t "bh_keyFor" -mxb 0 -mnb 0 bh_keyForUI;
+        columnLayout -adj 1 -rowSpacing 1 -columnWidth 180 mainCol;
+	button -label "Zero Pos/Rot" -ann "Reset the position and rotation of selected object(s)" -command bh_zeroPosRot key2; 	
+        rowColumnLayout -numberOfColumns 2;
+
+       text "Range";
+	   intField  -minValue 0 -maxValue 9999 -value 4 forField; // numerical entry field for start frame  value
+	   text "PreRoll";
+	   intField  -minValue 0 -maxValue 9999 -value 0 preField; // numerical entry field for start frame  value
+		
+	setParent..;   	
+	button -label "Key For" -ann "Press to Key the current world space position/rotation of selected object(s) for a range of frames" -command bh_keyForProc key4; 	
+        showWindow bh_keyForUI;
+		window -edit -widthHeight 140 95 bh_keyForUI;
+    
+    }
+    //bh_keyFor;
+    
+    
+    global proc bh_keyForProc ()
+    {
+	string $origSel[]=`ls -sl`;
+	int $preAmount= `intField -q -value preField`;
+    int $startFrame = `currentTime -q`-$preAmount;	
+	int $frameAmount= `intField -query -value forField`;	
+	int $stopFrame=($startFrame+$frameAmount);   
+	
+	for ($each in $origSel)
+	{
+	float $CurWSRotation[] = `xform -q -ws -ro $each `;
+	float $CurWSPosition[] = `xform -q -ws -t $each `;
+	
+
+	
+	  for($f=$startFrame;$f<($stopFrame);$f++)
+	{
+	currentTime $f;
+	xform -ws -ro $CurWSRotation[0] $CurWSRotation[1] $CurWSRotation[2] $each ;
+	xform -ws -t $CurWSPosition[0] $CurWSPosition[1] $CurWSPosition[2] $each ;
+	setKeyframe;
+	
+	  }
+	  }
+
+	  select -r $origSel;
+    }
+   
+   global proc bh_zeroPosRot()
+   {
+   string $sel[]=`ls -sl`;
+   for ($each in $sel)
+	   {
+	   setAttr ($each+".translateX") 0;
+	   setAttr ($each+".translateY") 0;
+	   setAttr ($each+".translateZ") 0;
+	   setAttr ($each+".rotateX") 0;
+	   setAttr ($each+".rotateY") 0;
+	   setAttr ($each+".rotateZ") 0;
+	   setKeyframe;
+	   
+	   }
+	  
+   }
+   
+  //================================================================================================	
+//================================================================================================
+
+global proc bh_rebuildProjectCurvesUI()
+{if (`window -exists bh_rebuildProjectCurvesUI`)
+        deleteUI bh_rebuildProjectCurvesUI;
+		
+		window -toolbox 1 -width 180 -t "bh_rebuildProjectCurvesUI" -mxb 0 -mnb 0 bh_rebuildProjectCurvesUI;
+        columnLayout -adj 1 -rowSpacing 1 -columnWidth 180 mainCol;
+		text "Path Spans";
+	   intField  -minValue 0 -maxValue 9999 -value 50 spanField; // numerical entry field 
+	   
+	button -label "Rebuild Path" -ann "Rebuild the path curves to increase or reduce amount of CVs" -command bh_rebuildPathCurves key15;
+separator;	
+	button -label "Reverse Path" -ann "Reverse the path curves direction" -command bh_reverseCurve key26; 
+	separator;
+	 button  -label "Project to Selected Mesh" -ann "Select a mesh object and run to project path curves to it" -command 	bh_projectPathCurves key16;
+		showWindow bh_rebuildProjectCurvesUI;
+		separator;
+		window -edit -widthHeight 250 120 bh_rebuildProjectCurvesUI;
+}
+
+  //================================================================================================	
+//================================================================================================
+
+global proc bh_rebuildPathCurves()
+ {
+ 
+ int $newSpans=`intField -q -value spanField`;
+ string $GC="groundCurve";
+
+rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $newSpans -d 2 -tol 0.0001 "groundCurve";
+rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $newSpans -d 2 -tol 0.0001 "bodyCurve";
+
+print ("Path Curves Rebuilt with "+$newSpans+" spans");
+ 
+ }
+
+ global proc bh_AutoRebuildPathCurves(int $newSpans)
+ {
+ 
+ //int $newSpans=`intField -q -value spanField`;
+ string $GC="groundCurve";
+
+rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $newSpans -d 2 -tol 0.0001 "groundCurve";
+rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $newSpans -d 2 -tol 0.0001 "bodyCurve";
+
+//print ("Path Curves Rebuilt with "+$newSpans+" spans");
+ 
+ }
+ 
+   //================================================================================================	
+//================================================================================================
+
+
+global proc bh_projectPathCurves()
+{
+string $sel[]=`ls -sl`;
+if(`size $sel` != 1)
+{
+error "Please select One Mesh object only";
+}
+string $floorMesh=$sel[0];
+
+string $worldUpOption=`upAxis -q -axis`;
+
+float $xPos;
+float $yPos;
+float $zPos;
+float $yOffset;
+float $zOffset;
+string $projCurve[];
+
+
+
+
+string $groundCurveShp[] =`listRelatives -s "groundCurve"`;
+string $bodyCurveShp[] =`listRelatives -s "bodyCurve"`;
+int $cvs=`getAttr ($groundCurveShp[0]+".spans")`;
+int $deg=`getAttr ($groundCurveShp[0]+".degree")`;
+int $totalCurvePoints=$cvs+$deg;
+float $rigScale=`getAttr ("bh_PathAnimCurves.scaleX") `;
+
+// project on the floor mesh
+if ($worldUpOption=="y")
+    {
+        $yOffset=(5*$rigScale);
+        $zOffset=0;
+		 $projCurve=`polyProjectCurve -ch true -direction 0 1 0 -pointsOnEdges 0 -curveSamples 50 -automatic 0 "groundCurve" $floorMesh` ;
+		
+		
+	}
+if ($worldUpOption=="z")
+    {
+        $yOffset=0;
+        $zOffset=(5*$rigScale);
+		 $projCurve=`polyProjectCurve -ch true -direction 0 0 1 -pointsOnEdges 0 -curveSamples 50 -automatic 0 "groundCurve" $floorMesh` ;
+		 
+	}
+
+
+// rebuild the projected curve to have the same CVs as ground curve
+string $rebuiltProjectedCurve[]=`rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $cvs -d $deg -tol 0.0001 $projCurve[0]`;
+ 
+
+
+
+// need to reverse the curve..?
+//reverseCurve -ch 0 -rpo 1 ($rebuiltProjectedCurve[0]+"rebuiltCurve1");
+string $rebuiltProjCurveShp[] =`listRelatives -s ($rebuiltProjectedCurve[0]+"rebuiltCurve1")`;
+int $rbcvs=`getAttr ($rebuiltProjCurveShp[0]+".spans")`;
+
+
+ // now need to transfer the global position of each point on the rebuilt curve to the ground and body curves
+
+string $curveParent[]=`listRelatives -p $rebuiltProjCurveShp[0]`;
+string $curve=$curveParent[0];
+
+ for ($c=0;$c<$totalCurvePoints;$c++)
+ {
+  // new in V1.037
+	// getting global point positions and using locators to find correct local position in case the 'pathAnimCurves' group has been moved/rotated
+    float $globalPointPosition[]=`pointPosition -w ($curve+".cv["+$c+"]")`;
+	//print $globalPointPosition;
+	
+	string $tempLoc[]=`spaceLocator`;
+	
+	setAttr ($tempLoc[0]+".tx") $globalPointPosition[0];
+	setAttr ($tempLoc[0]+".ty") $globalPointPosition[1];
+	setAttr ($tempLoc[0]+".tz") $globalPointPosition[2];
+	parent $tempLoc bh_PathAnimCurves;
+	
+	
+  
+	 $xPos=`getAttr  ($tempLoc[0]+".tx")` ;
+     
+	 
+	 setAttr  ($groundCurveShp[0]+".controlPoints["+$c+"].xValue") ($xPos) ;    
+     setAttr  ($bodyCurveShp[0]+".controlPoints["+$c+"].xValue") ($xPos) ; 
+
+
+    
+	$yPos=`getAttr  ($tempLoc[0]+".ty")` ;	 
+       
+     setAttr  ($bodyCurveShp[0]+".controlPoints["+$c+"].yValue") ($yPos+($yOffset/$rigScale)) ;
+	 setAttr  ($groundCurveShp[0]+".controlPoints["+$c+"].yValue") ($yPos) ;    
+     
+	$zPos=`getAttr  ($tempLoc[0]+".tz")` ;	 
+    
+     setAttr  ($bodyCurveShp[0]+".controlPoints["+$c+"].zValue") ($zPos+($zOffset/$rigScale)) ;
+	 setAttr  ($groundCurveShp[0]+".controlPoints["+$c+"].zValue") ($zPos);     
+	 
+	 delete $tempLoc;
+
+ }
+ 
+ 
+ delete $projCurve; // delete the projected one
+ delete ($rebuiltProjectedCurve[0]+"rebuiltCurve1");
+ print ("PathCurves Projected to "+$floorMesh);
+ 
+ }
+ 
+
+
+
+
+
+
+
+  //================================================================================================	
+//================================================================================================
+
+global proc bh_reverseCurve()
+{
+reverseCurve -ch 0 -rpo 1 ("bodyCurve");
+reverseCurve -ch 0 -rpo 1 ("groundCurve");
+print "Path Curve Direction Reversed";
+}
+
+//////////////////////////////////////////////////////
+// bh_savePathPointPositions
+global proc bh_savePathPointPositions()
+
+{
+
+if (!`objExists("bh_PathAnimCurves")`)
+    {error "No Path System Found in this scene";
+	}
+
+string $folderBrowse[] = `fileDialog2 -cap ("Choose Folder To Save Path Positions To") -fileMode 3 -okc "Set" -dialogStyle 2`; 
+
+string $folderPath = ($folderBrowse[0]+"/");
+
+
+// store current position/orientation of bh_PathAnimCurves group
+
+float $curX=`getAttr "bh_PathAnimCurves.translateX"`;
+float $curY=`getAttr "bh_PathAnimCurves.translateY"`;
+float $curZ=`getAttr "bh_PathAnimCurves.translateZ"`;
+float $curRX=`getAttr "bh_PathAnimCurves.rotateX"`;
+float $curRY=`getAttr "bh_PathAnimCurves.rotateY"`;
+float $curRZ=`getAttr "bh_PathAnimCurves.rotateZ"`;
+
+// now reset coords for the group before saving out positions..
+setAttr "bh_PathAnimCurves.translateX" 0;
+setAttr "bh_PathAnimCurves.translateY" 0;
+setAttr "bh_PathAnimCurves.translateZ" 0;
+setAttr "bh_PathAnimCurves.rotateX" 0;
+setAttr "bh_PathAnimCurves.rotateY" 0;
+setAttr "bh_PathAnimCurves.rotateZ" 0;
+
+
+
+string $groundCurveShp[] =`listRelatives -s "groundCurve"`;
+string $bodyCurveShp[] =`listRelatives -s "bodyCurve"`;
+int $cvs=`getAttr ($groundCurveShp[0]+".spans")`;
+int $deg=`getAttr ($groundCurveShp[0]+".degree")`;
+int $totalCurvePoints=$cvs+$deg;
+
+string $bodyCurve ="bodyCurve";
+string $groundCurve ="groundCurve";
+
+
+
+//int $fout = `fopen ("c:\\bh_pathAnimPointPositions.txt") "w"`;
+int $fout = `fopen ($folderPath+"bh_pathAnimPointPositions.txt") "w"`;
+ 
+
+  print "Exporting.. ";
+  
+  // first store the total points count.. 
+  fprint $fout "PointCount=";
+  fprint $fout $totalCurvePoints;
+
+  
+  //save out point positions for curves
+  
+   string $curve=$groundCurve;
+   string $curve2=$bodyCurve;
+  
+  for ($c=0;$c<$totalCurvePoints;$c++)
+  
+  {		
+  float $globalPointPosition[]=`pointPosition -w ($curve+".cv["+$c+"]")`;
+  float $globalPointPosition2[]=`pointPosition -w ($curve2+".cv["+$c+"]")`;
+  
+	float $xPointPos =$globalPointPosition[0];
+	float $yPointPos =$globalPointPosition[1];
+	float $zPointPos =$globalPointPosition[2];
+	float $xPointPos2 =$globalPointPosition2[0];
+	float $yPointPos2 =$globalPointPosition2[1];
+	float $zPointPos2 =$globalPointPosition2[2];
+            //fprint $fout "Point_";
+             
+			//fprint $fout $c;
+			//fprint $fout "\n";
+			//fprint $fout "GROUND:"; 
+			fprint $fout "\n";
+            fprint $fout $xPointPos;
+			fprint $fout "\n";
+			fprint $fout $yPointPos;
+			fprint $fout "\n";
+			fprint $fout $zPointPos;
+			fprint $fout "\n";
+			//fprint $fout ":BODY:";
+			//fprint $fout "\n";
+			fprint $fout $xPointPos2;
+			fprint $fout "\n";
+			fprint $fout $yPointPos2;
+			fprint $fout "\n";
+			fprint $fout $zPointPos2;
+			fprint $fout "\n";
+			
+		
+		
+        }
+
+
+  fclose $fout;
+  
+  // restore the original position/orientation of the pathAnimCurves group.
+setAttr "bh_PathAnimCurves.translateX" $curX;
+setAttr "bh_PathAnimCurves.translateY" $curY;
+setAttr "bh_PathAnimCurves.translateZ" $curZ;
+setAttr "bh_PathAnimCurves.rotateX" $curRX;
+setAttr "bh_PathAnimCurves.rotateY" $curRY;
+setAttr "bh_PathAnimCurves.rotateZ" $curRZ;
+
+  print "Path Point Positions Exported!";
+  }
+  
+  /////////////////////////////////////////////////////////
+  
+  
+  global proc bh_loadPathPointPositions()
+{
+if (!`objExists("bh_PathAnimCurves")`)
+    {error "No Path System Found in this scene";
+	}
+string $folderBrowse[] = `fileDialog2 -cap ("Choose Folder To Load Path Positions From") -fileMode 3 -okc "Set" -dialogStyle 2`; 
+
+string $folderPath = ($folderBrowse[0]+"/");
+
+print $folderPath;
+
+string $groundCurveShp[] =`listRelatives -s "groundCurve"`;
+string $bodyCurveShp[] =`listRelatives -s "bodyCurve"`;
+int $cvs=`getAttr ($groundCurveShp[0]+".spans")`;
+int $deg=`getAttr ($groundCurveShp[0]+".degree")`;
+int $totalCurvePoints=$cvs+$deg;
+
+float $crvScale=`getAttr ("bh_PathAnimCurves.scaleX")`;
+
+string $bodyCurve ="bodyCurve";
+string $groundCurve ="groundCurve";
+
+
+// store current position/orientation of bh_PathAnimCurves group
+
+float $curX=`getAttr "bh_PathAnimCurves.translateX"`;
+float $curY=`getAttr "bh_PathAnimCurves.translateY"`;
+float $curZ=`getAttr "bh_PathAnimCurves.translateZ"`;
+float $curRX=`getAttr "bh_PathAnimCurves.rotateX"`;
+float $curRY=`getAttr "bh_PathAnimCurves.rotateY"`;
+float $curRZ=`getAttr "bh_PathAnimCurves.rotateZ"`;
+
+// now reset coords for the group before loading  positions..
+setAttr "bh_PathAnimCurves.translateX" 0;
+setAttr "bh_PathAnimCurves.translateY" 0;
+setAttr "bh_PathAnimCurves.translateZ" 0;
+setAttr "bh_PathAnimCurves.rotateX" 0;
+setAttr "bh_PathAnimCurves.rotateY" 0;
+setAttr "bh_PathAnimCurves.rotateZ" 0;
+
+
+
+
+
+// load path point positions.. 
+
+
+
+//int $fin = `fopen ("c:\\bh_pathAnimPointPositions.txt") "r"`;
+
+
+int $fin = `fopen ($folderPath+"bh_pathAnimPointPositions.txt") "r"`;
+
+string $nextWord=`fgetword $fin`;
+string $pointCountString= substituteAllString ($nextWord,"PointCount=","");
+int $pointCount=int($pointCountString);
+
+// check that the stored path data has the same point count as the one in the scene
+if ($pointCount!=$totalCurvePoints)
+{
+		int $rebuildCount=($pointCount-2);
+		
+    //error ("The saved path has a different point count to the one in the scene, cannot restore - please rebuild with "+$rebuildCount+" verts first");
+	// need to rebuild the path here with same point count.. 
+	
+	bh_AutoRebuildPathCurves($rebuildCount);
+	print ("Path Rebuilt to match point count of saved one..");
+    refresh -f;
+	
+}
+
+
+// now run a loop that gets the point positions (3 each for ground first, then body)
+
+for ($c=0;$c<$pointCount;$c++)
+{
+    float $groundX=`fgetword $fin`;
+   
+   float $groundY=`fgetword $fin`;
+   
+   float $groundZ=`fgetword $fin`;
+   
+
+    // set ground path positions ::
+    
+   setAttr ($groundCurveShp[0]+".controlPoints["+$c+"].xValue") ($groundX/$crvScale);
+    setAttr ($groundCurveShp[0]+".controlPoints["+$c+"].yValue") ($groundY/$crvScale);
+    setAttr ($groundCurveShp[0]+".controlPoints["+$c+"].zValue") ($groundZ/$crvScale);
+    
+    //print "\n";
+    float $bodyX=`fgetword $fin`;
+    
+   float $bodyY=`fgetword $fin`;
+   float $bodyZ=`fgetword $fin`;
+
+    setAttr ($bodyCurveShp[0]+".controlPoints["+$c+"].xValue") ($bodyX/$crvScale);
+    setAttr ($bodyCurveShp[0]+".controlPoints["+$c+"].yValue") ($bodyY/$crvScale);
+    setAttr ($bodyCurveShp[0]+".controlPoints["+$c+"].zValue") ($bodyZ/$crvScale);
+    
+   //print "\n";
+
+}
+
+
+
+fclose $fin;
+
+  // restore the original position/orientation of the pathAnimCurves group.
+setAttr "bh_PathAnimCurves.translateX" $curX;
+setAttr "bh_PathAnimCurves.translateY" $curY;
+setAttr "bh_PathAnimCurves.translateZ" $curZ;
+setAttr "bh_PathAnimCurves.rotateX" $curRX;
+setAttr "bh_PathAnimCurves.rotateY" $curRY;
+setAttr "bh_PathAnimCurves.rotateZ" $curRZ;
+print "Path point positions loaded successfully";
+}
+
+
+////////
+
+global proc bhScaleLocators()
+{
+string $worldUpOption=`upAxis -q -axis`;
+float $locScaleVal = `floatField -query -value scaleLocsValField`;
+ string $animOffsetLocators[]=`ls -r 1 "*_AnimOffset"`;
+    for ($each in $animOffsetLocators)
+    {
+	if ($worldUpOption=="y")
+   {
+   setAttr ($each+".localScaleX") (1*$locScaleVal);
+   setAttr ($each+".localScaleZ") (4*$locScaleVal);
+   
+   }
+    if ($worldUpOption=="z")
+   {
+   setAttr ($each+".localScaleX") (4*$locScaleVal);
+   setAttr ($each+".localScaleZ") (1*$locScaleVal);
+   
+   }
+   
+    setAttr ($each+".localScaleY") (1*$locScaleVal);
+  
+	
+        
+    }
+	string $animOffsetLocators2[]=`ls -r 1 "*_CtrlPivot"`;
+    for ($each in $animOffsetLocators2)
+    {
+	 setAttr ($each+".localScaleX") (1*$locScaleVal);
+    setAttr ($each+".localScaleY") (1*$locScaleVal);
+    setAttr ($each+".localScaleZ") (1*$locScaleVal);
+       
+    }
+	
+}

@@ -1,0 +1,7 @@
++ NERVE 5.0 ./nerve
+PYTHONPATH+:=lib
+XBMLANGPATH+:=icons
+MAYA_SCRIPT_PATH+:=mel
+MAYA_PLUG_IN_PATH+:=plugins
+
+
